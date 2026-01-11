@@ -953,7 +953,7 @@ export default function Home() {
           letterSpacing: '0.5px',
           pointerEvents: 'none'
         }}>
-          Press Space to See Truth
+          Press Space for Truth
         </p>
       )}
       
