@@ -4,14 +4,20 @@ import { Line2 } from 'three/examples/jsm/lines/Line2';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 
-export default function Bird({ scene, position = [0, 25, 0], offset = { x: 0, z: 0, angle: 0 }, tiltStartTimeRef = null, flapDelay = 0 }) {
+export default function Bird({ scene, position = [0, 25, 0], offset = { x: 0, z: 0, angle: 0 }, tiltStartTimeRef = null, flapDelay = 0, enableColorTransition = false }) {
   const birdRef = useRef(null);
   const leftWingRef = useRef(null);
   const rightWingRef = useRef(null);
+  const enableColorTransitionRef = useRef(enableColorTransition);
   const flightPathRef = useRef({ 
     height: 60, // Fixed high altitude
     speed: 0.05 // Forward speed
   });
+  
+  // Update the ref whenever the prop changes
+  useEffect(() => {
+    enableColorTransitionRef.current = enableColorTransition;
+  }, [enableColorTransition]);
 
   useEffect(() => {
     if (!scene) return;
@@ -27,13 +33,16 @@ export default function Bird({ scene, position = [0, 25, 0], offset = { x: 0, z:
       worldUnits: false
     });
 
-    // Create black line material (on top)
+    // Create black line material (on top) - will be animated to orange
     const material = new LineMaterial({ 
       color: 0x000000,
       linewidth: 5, // Thickness in pixels
       resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
       worldUnits: false
     });
+    
+    // Store material reference for color animation
+    const materialRef = { material };
 
     // Body outline (white, behind)
     const bodyOutlineGeometry = new LineGeometry();
@@ -145,6 +154,20 @@ export default function Bird({ scene, position = [0, 25, 0], offset = { x: 0, z:
       
       // Wing spread (wings extend more on downstroke)
       const spread = 1 + (wingPhase * 0.3);
+      
+      // Color transition: black to orange based on wing expansion (only if enabled)
+      if (enableColorTransitionRef.current) {
+        // wingPhase ranges from -1 to 1, we want orange when fully expanded (positive)
+        const colorT = Math.max(0, wingPhase); // 0 to 1, only when wings are up
+        // Interpolate between black (0, 0, 0) and orange (255, 149, 0)
+        const r = Math.floor(colorT * 255) / 255;
+        const g = Math.floor(colorT * 149) / 255;
+        const b = 0;
+        materialRef.material.color.setRGB(r, g, b);
+      } else {
+        // Keep black when color transition is not enabled
+        materialRef.material.color.setRGB(0, 0, 0);
+      }
       
       // Update left wing (both outline and main line)
       if (leftWingRef.current) {

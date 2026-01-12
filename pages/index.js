@@ -4,6 +4,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass';
 import Bird from '../components/Bird';
+import MainUI from '../components/MainUI';
 
 // Custom PencilLinesPass for sketchy pencil effect
 class PencilLinesPass extends Pass {
@@ -206,9 +207,16 @@ export default function Home() {
   const [showSpaceMessage, setShowSpaceMessage] = useState(false);
   const [spacePressed, setSpacePressed] = useState(false);
   const [showDiv, setShowDiv] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const [userClickedToStart, setUserClickedToStart] = useState(false);
   const audioRef = useRef(null);
   const eagleAudioRef = useRef(null);
+  const endOutputAudioRef = useRef(null);
   const tiltStartTimeRef = useRef(null);
+  const videoRefs = useRef([]);
+  const [displayedText, setDisplayedText] = useState('');
+  const [typingComplete, setTypingComplete] = useState(false);
+  const [showFilledLogo, setShowFilledLogo] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -780,119 +788,291 @@ export default function Home() {
     };
   }, []);
 
-  // Audio handling - start muted, unmute on any key or click
+  // Typewriter effect for text
   useEffect(() => {
-    const handleUnmute = () => {
-      if (audioRef.current && !audioUnmuted) {
-        audioRef.current.muted = false;
-        audioRef.current.volume = 1.0; // Ensure full volume at start
-        audioRef.current.play().catch(err => console.log('Audio play failed:', err));
-        setAudioUnmuted(true);
+    const fullText = 'wake up... you came here for a reason';
+    let currentIndex = 0;
+    
+    const typeNextCharacter = () => {
+      if (currentIndex < fullText.length) {
+        setDisplayedText(fullText.substring(0, currentIndex + 1));
+        currentIndex++;
         
-        // After unmute message fades out (1.5s) + delay (1s), show space message
+        // Check if we just typed the three dots "..."
+        if (currentIndex === 10) { // "wake up..." is 10 characters
+          // Pause for 1 second after the dots
+          setTimeout(typeNextCharacter, 1000);
+        } else {
+          // Normal typing speed
+          setTimeout(typeNextCharacter, 80);
+        }
+      } else {
+        // Typing is complete
+        setTypingComplete(true);
+      }
+    };
+    
+    typeNextCharacter();
+  }, []);
+
+  // Keep all videos in sync
+  useEffect(() => {
+    const videos = videoRefs.current.filter(v => v !== null);
+    if (videos.length === 0) return;
+
+    const syncVideos = () => {
+      const masterVideo = videos[0];
+      const masterTime = masterVideo.currentTime;
+      
+      videos.forEach((video, index) => {
+        if (index > 0 && Math.abs(video.currentTime - masterTime) > 0.1) {
+          video.currentTime = masterTime;
+        }
+      });
+    };
+
+    const interval = setInterval(syncVideos, 100);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  // Audio handling - start muted, unmute on any key or click (only after typing is complete)
+  useEffect(() => {
+    const handleInteraction = () => {
+      if (!userClickedToStart && typingComplete) {
+        setUserClickedToStart(true);
+        
+        if (audioRef.current && !audioUnmuted) {
+          audioRef.current.muted = false;
+          audioRef.current.volume = 1.0;
+          audioRef.current.play().catch(err => console.log('Audio play failed:', err));
+          setAudioUnmuted(true);
+        }
+        
+        // Play endOutput.wav on the initial click
+        if (endOutputAudioRef.current) {
+          endOutputAudioRef.current.currentTime = 0;
+          endOutputAudioRef.current.play().catch(err => console.log('EndOutput audio play failed:', err));
+        }
+        
+        // Start logo transition after 7 seconds - fade in filled logo on top
         setTimeout(() => {
-          setShowSpaceMessage(true);
-        }, 2500); // 1.5s fade + 1s delay
+          setShowFilledLogo(true);
+        }, 7000);
       }
     };
 
     // Listen for any key press or click
-    window.addEventListener('keydown', handleUnmute);
-    window.addEventListener('click', handleUnmute);
+    window.addEventListener('keydown', handleInteraction);
+    window.addEventListener('click', handleInteraction);
 
     return () => {
-      window.removeEventListener('keydown', handleUnmute);
-      window.removeEventListener('click', handleUnmute);
+      window.removeEventListener('keydown', handleInteraction);
+      window.removeEventListener('click', handleInteraction);
     };
-  }, [audioUnmuted]);
+  }, [userClickedToStart, audioUnmuted, typingComplete]);
 
-  // Space key handler - triggers tilt animation
+  // Monitor video time and trigger fade out at 2 seconds
   useEffect(() => {
-    const handleSpace = (e) => {
-      if (e.code === 'Space' && !spacePressed) {
-        setSpacePressed(true);
-        tiltStartTimeRef.current = performance.now();
+    if (!userClickedToStart) return;
+
+    const checkVideoTime = () => {
+      const videos = videoRefs.current.filter(v => v !== null);
+      if (videos.length > 0 && videos[0].currentTime >= 2.0) {
+        // Pause all videos at 2 seconds
+        videos.forEach(video => {
+          video.currentTime = 2.0;
+          video.pause();
+        });
         
-        // Fade out background river sound
-        if (audioRef.current) {
-          const fadeOutDuration = 2000; // 2 seconds
-          const fadeSteps = 50;
-          const stepTime = fadeOutDuration / fadeSteps;
-          const volumeStep = audioRef.current.volume / fadeSteps;
-          
-          let currentStep = 0;
-          const fadeInterval = setInterval(() => {
-            if (currentStep >= fadeSteps || !audioRef.current) {
-              clearInterval(fadeInterval);
-              if (audioRef.current) {
-                audioRef.current.volume = 0;
-              }
-            } else {
-              audioRef.current.volume = Math.max(0, audioRef.current.volume - volumeStep);
-              currentStep++;
-            }
-          }, stepTime);
-        }
+        // Start fade out
+        setHasInteracted(true);
         
-        // Play eagle sound as background fades
-        if (eagleAudioRef.current) {
-          eagleAudioRef.current.currentTime = 0; // Reset to start
-          eagleAudioRef.current.play().catch(err => console.log('Eagle sound failed:', err));
-        }
-        
-        // Show div after 4 seconds
+        // After fade out (2s), show space message
         setTimeout(() => {
-          setShowDiv(true);
-        }, 4000);
+          setShowSpaceMessage(true);
+        }, 2000);
+      }
+    };
+
+    const interval = setInterval(checkVideoTime, 50);
+    
+    return () => clearInterval(interval);
+  }, [userClickedToStart]);
+
+  // Space key handler - triggers tilt animation (only after typing is complete)
+  useEffect(() => {
+    const triggerTiltAnimation = () => {
+      setSpacePressed(true);
+      tiltStartTimeRef.current = performance.now();
+      
+      // Fade out background river sound
+      if (audioRef.current) {
+        const fadeOutDuration = 2000; // 2 seconds
+        const fadeSteps = 50;
+        const stepTime = fadeOutDuration / fadeSteps;
+        const volumeStep = audioRef.current.volume / fadeSteps;
+        
+        let currentStep = 0;
+        const fadeInterval = setInterval(() => {
+          if (currentStep >= fadeSteps || !audioRef.current) {
+            clearInterval(fadeInterval);
+            if (audioRef.current) {
+              audioRef.current.volume = 0;
+            }
+          } else {
+            audioRef.current.volume = Math.max(0, audioRef.current.volume - volumeStep);
+            currentStep++;
+          }
+        }, stepTime);
+      }
+      
+      // Play eagle sound as background fades
+      if (eagleAudioRef.current) {
+        eagleAudioRef.current.currentTime = 0; // Reset to start
+        eagleAudioRef.current.play().catch(err => console.log('Eagle sound failed:', err));
+      }
+      
+      // Show div after 4 seconds
+      setTimeout(() => {
+        setShowDiv(true);
+      }, 4000);
+    };
+
+    const handleSpace = (e) => {
+      if (e.code === 'Space' && !spacePressed && typingComplete) {
+        triggerTiltAnimation();
+      }
+    };
+
+    const handleClick = () => {
+      // Only trigger on click if we're past the initial interaction (showSpaceMessage is visible)
+      if (!spacePressed && showSpaceMessage) {
+        triggerTiltAnimation();
       }
     };
 
     window.addEventListener('keydown', handleSpace);
+    window.addEventListener('click', handleClick);
 
     return () => {
       window.removeEventListener('keydown', handleSpace);
+      window.removeEventListener('click', handleClick);
     };
-  }, [spacePressed]);
+  }, [spacePressed, typingComplete, showSpaceMessage]);
 
   return (
     <>
-      <div ref={containerRef} style={{ width: '100vw', height: '100vh', margin: 0, padding: 0 }} />
+      <div ref={containerRef} style={{ width: '100vw', height: '100vh', margin: 0, padding: 0, cursor: spacePressed ? 'default' : (typingComplete ? 'pointer' : 'default') }} />
+      
+      {/* Black overlay for darkness and blur */}
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: hasInteracted ? 'rgba(0, 0, 0, 0)' : 'rgba(0, 0, 0, 0.6)',
+        backdropFilter: hasInteracted ? 'blur(0px)' : 'blur(3px)',
+        WebkitBackdropFilter: hasInteracted ? 'blur(0px)' : 'blur(3px)',
+        zIndex: 9998,
+        pointerEvents: 'none',
+        transition: 'background-color 2s ease-out, backdrop-filter 2s ease-out, -webkit-backdrop-filter 2s ease-out'
+      }} />
+      
+      {/* Desaturation overlay - gradually increases saturation over 7 seconds after click */}
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backdropFilter: userClickedToStart ? 'saturate(1.5)' : 'saturate(0)',
+        WebkitBackdropFilter: userClickedToStart ? 'saturate(1.5)' : 'saturate(0)',
+        zIndex: 99999,
+        pointerEvents: 'none',
+        transition: 'backdrop-filter 7s ease-in-out, -webkit-backdrop-filter 7s ease-in-out'
+      }} />
+      
+      {/* Center text */}
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        color: 'white',
+        fontSize: '16px',
+        fontFamily: 'sans-serif',
+        textAlign: 'center',
+        zIndex: 10100,
+        pointerEvents: 'none',
+        opacity: hasInteracted ? 0 : 1,
+        transition: 'opacity 2s ease-out'
+      }}>
+        {displayedText}
+      </div>
+      
+      {/* Multiple stacked video overlays with transparent background */}
+      {[0, 1, 2, 3, 4].map((index) => (
+        <video
+          key={index}
+          ref={(el) => (videoRefs.current[index] = el)}
+          autoPlay
+          loop
+          muted
+          playsInline
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            objectFit: 'cover',
+            zIndex: 9999 + index,
+            pointerEvents: 'none',
+            opacity: hasInteracted ? 0 : 1,
+            transition: 'opacity 2s ease-out'
+          }}
+          src="/green-transparent.webm"
+        />
+      ))}
+      
       {scene && camera && (
         <>
           {/* Leader bird at the front of V */}
-          <Bird scene={scene} position={[0, 25, 0]} tiltStartTimeRef={tiltStartTimeRef} flapDelay={0} />
+          <Bird scene={scene} position={[0, 25, 0]} tiltStartTimeRef={tiltStartTimeRef} flapDelay={0} enableColorTransition={showFilledLogo} />
           
           {/* Left side of V formation (8 birds) */}
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -4, z: -6, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={100} />
+                offset={{ x: -4, z: -6, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={100} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -8, z: -12, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={200} />
+                offset={{ x: -8, z: -12, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={200} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -12, z: -18, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={300} />
+                offset={{ x: -12, z: -18, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={300} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -16, z: -24, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={400} />
+                offset={{ x: -16, z: -24, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={400} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -20, z: -30, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={500} />
+                offset={{ x: -20, z: -30, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={500} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -24, z: -36, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={600} />
+                offset={{ x: -24, z: -36, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={600} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: -28, z: -42, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={700} />
+                offset={{ x: -28, z: -42, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={700} enableColorTransition={showFilledLogo} />
           
           {/* Right side of V formation (7 birds) */}
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 4, z: -6, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={100} />
+                offset={{ x: 4, z: -6, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={100} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 8, z: -12, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={200} />
+                offset={{ x: 8, z: -12, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={200} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 12, z: -18, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={300} />
+                offset={{ x: 12, z: -18, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={300} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 16, z: -24, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={400} />
+                offset={{ x: 16, z: -24, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={400} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 20, z: -30, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={500} />
+                offset={{ x: 20, z: -30, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={500} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 24, z: -36, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={600} />
+                offset={{ x: 24, z: -36, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={600} enableColorTransition={showFilledLogo} />
           <Bird scene={scene} position={[0, 25, 0]} 
-                offset={{ x: 28, z: -42, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={700} />
+                offset={{ x: 28, z: -42, angle: 0 }} tiltStartTimeRef={tiltStartTimeRef} flapDelay={700} enableColorTransition={showFilledLogo} />
         </>
       )}
       
@@ -910,29 +1090,60 @@ export default function Home() {
         src="/eagle-soundbite.mp3"
         preload="auto"
       />
+      <audio 
+        ref={endOutputAudioRef}
+        src="/endOutput.wav"
+        preload="auto"
+      />
       
-      {/* Freedom logo at top center */}
- 
-      
-      {/* Unmute indicator - fades out after audio is unmuted */}
+      {/* Freedom logo at top center - outline version */}
       <div style={{
         position: 'fixed',
-        bottom: '20px',
-        left: '20px',
-        background: 'rgba(0, 0, 0, 0.6)',
-        color: 'white',
-        padding: '8px 16px',
-        borderRadius: '6px',
-        fontSize: '14px',
-        fontFamily: 'sans-serif',
+        top: '30px',
+        left: '50%',
+        transform: 'translateX(-50%)',
         zIndex: 1000,
-        backdropFilter: 'blur(10px)',
-        animation: audioUnmuted ? 'fadeOut 1.5s ease-out forwards' : 'pulse 2s infinite',
-        cursor: 'pointer',
-        pointerEvents: audioUnmuted ? 'none' : 'auto'
+        opacity: spacePressed ? 0 : 1,
+        transition: 'opacity 1.5s ease-out',
+        pointerEvents: spacePressed ? 'none' : 'auto'
       }}>
-        Click or press any key for sound
+        <img 
+          src="/AmiigoBeforeFileld.svg"
+          alt="Freedom" 
+          style={{ 
+            height: '180px',
+            width: 'auto',
+            maxWidth: "calc(100vw - 32px)",
+            paddingLeft: 16,
+            paddingRight: 16
+          }} 
+        />
       </div>
+      
+      {/* Freedom logo at top center - filled version that fades in on top */}
+      <div style={{
+        position: 'fixed',
+        top: '30px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 1001,
+        opacity: spacePressed ? 0 : (showFilledLogo ? 1 : 0),
+        transition: 'opacity 2s ease-in',
+        pointerEvents: spacePressed ? 'none' : 'auto'
+      }}>
+        <img 
+          src="/Amiigo.svg"
+          alt="Freedom" 
+          style={{ 
+            height: '180px',
+            width: 'auto',
+            maxWidth: "calc(100vw - 32px)",
+            paddingLeft: 16,
+            paddingRight: 16
+          }} 
+        />
+      </div>
+      
       
       {/* Press Space to Begin - centered caption at bottom */}
       {showSpaceMessage && (
@@ -953,35 +1164,17 @@ export default function Home() {
           letterSpacing: '0.5px',
           pointerEvents: 'none'
         }}>
-          Press Space for Truth
+          Press Space or Click
         </p>
       )}
       
-      {/* Div that appears 4 seconds after space is pressed */}
-      {showDiv && (
-        <div style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: '400px',
-          height: '400px',
-          background: 'white',
-          borderRadius: '20px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '24px',
-          fontFamily: 'sans-serif',
-          fontWeight: 'bold',
-          zIndex: 2000,
-          animation: 'fadeIn 1s ease-in'
-        }}>
-          Gratitude
-        </div>
-      )}
+      {/* MainUI that appears 4 seconds after space is pressed */}
+      {showDiv && <MainUI />}
       
-      <style jsx>{`
+      <style jsx global>{`
+        body {
+          cursor: ${spacePressed ? 'default' : (typingComplete ? 'pointer' : 'default')};
+        }
         @keyframes pulse {
           0%, 100% { opacity: 0.8; }
           50% { opacity: 1; }
